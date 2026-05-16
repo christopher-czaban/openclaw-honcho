@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { flushMessages } from "../hooks/capture.js";
+import { buildSessionKey } from "../helpers.js";
 import type { PluginState } from "../state.js";
 
 const SENTINEL = "Conversation info (untrusted metadata):";
@@ -44,9 +45,11 @@ function createMockState(): { state: PluginState; session: SessionStub } {
       session: vi.fn(async () => session),
     },
     turnStartIndex: new Map<string, number>(),
+    sessionSenderIds: new Map<string, string>(),
     ensureInitialized: vi.fn(async () => undefined),
     getAgentPeer: vi.fn(async () => agentPeer),
     getParticipantPeer: vi.fn(async () => ownerPeer),
+    resolveSessionParticipantPeer: vi.fn(async () => ownerPeer),
     resolveDefaultAgentId: vi.fn(() => "main"),
   } as unknown as PluginState;
 
@@ -90,6 +93,7 @@ describe("flushMessages metadata", () => {
     expect(meta.messageProvider).toBe("discord");
     expect(meta.lastSessionId).toBe("uuid-current");
     expect(meta.agentId).toBe("main");
+    expect((state.honcho.session as unknown as ReturnType<typeof vi.fn>).mock.calls[0]).toHaveLength(1);
   });
 
   it("records participantSenderId from the latest user message in the batch", async () => {
@@ -119,6 +123,31 @@ describe("flushMessages metadata", () => {
     );
 
     expect(session.metadata.participantSenderId).toBe("U-bob");
+  });
+
+  it("falls back to the sender captured during before_prompt_build when saved messages lack metadata", async () => {
+    const { state, session } = createMockState();
+    const api = { logger: loggerStub() } as never;
+    const openclawSessionKey = "agent:main:telegram:direct:8784993029";
+    const honchoSessionKey = buildSessionKey({ sessionKey: openclawSessionKey, agentId: "main" });
+
+    state.sessionSenderIds.set(honchoSessionKey, "8784993029");
+
+    await flushMessages(
+      api,
+      state,
+      [
+        { role: "user", content: "metadata already stripped", timestamp: 1 },
+        { role: "assistant", content: "reply", timestamp: 2 },
+      ],
+      {
+        sessionKey: openclawSessionKey,
+        agentId: "main",
+      },
+    );
+
+    expect(state.getParticipantPeer).toHaveBeenCalledWith("8784993029");
+    expect(session.metadata.participantSenderId).toBe("8784993029");
   });
 
   it("classifies cron and subagent sessions in the metadata block", async () => {
