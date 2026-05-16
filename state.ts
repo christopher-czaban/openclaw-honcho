@@ -45,6 +45,10 @@ export type PluginState = {
    * Used by the capture hook to determine where the current turn starts in the
    * accumulated message array, so first-init skips pre-installation history. */
   turnStartIndex: Map<string, number>;
+  /** Last inbound sender_id seen before prompt build, keyed by Honcho session key.
+   * Capture may receive a delta that no longer contains channel metadata; this
+   * keeps sender attribution stable for Telegram DMs and group turns. */
+  sessionSenderIds: Map<string, string>;
   initialized: boolean;
   api: OpenClawPluginApi;
   ensureInitialized: () => Promise<void>;
@@ -99,6 +103,7 @@ export function createPluginState(api: OpenClawPluginApi): PluginState {
     agentPeers: new Map<string, Peer>(),
     agentPeerMap: {},
     turnStartIndex: new Map<string, number>(),
+    sessionSenderIds: new Map<string, string>(),
     initialized: false,
     api,
     peersPersister,

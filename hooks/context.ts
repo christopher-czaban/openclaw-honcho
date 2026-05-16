@@ -21,9 +21,30 @@ export function registerContextHook(api: OpenClawPluginApi, state: PluginState):
       // speaker. In group chats this would otherwise build context against the
       // prior participant's representation whenever the speaker changes.
       const currentSenderId = extractSenderId(event.prompt);
+      if (currentSenderId) {
+        state.sessionSenderIds.set(sessionKey, currentSenderId);
+      }
       const participantPeer = currentSenderId
         ? await state.getParticipantPeer(currentSenderId)
         : await state.resolveSessionParticipantPeer(sessionKey);
+
+      if (currentSenderId) {
+        try {
+          const session = await state.honcho.session(sessionKey);
+          const meta = await session.getMetadata();
+          const existingMeta =
+            meta && typeof meta === "object" ? (meta as Record<string, unknown>) : {};
+          if (existingMeta.participantSenderId !== currentSenderId || existingMeta.agentId !== agentId) {
+            await session.setMetadata({
+              ...existingMeta,
+              agentId,
+              participantSenderId: currentSenderId,
+            });
+          }
+        } catch (e: unknown) {
+          api.logger.warn?.(`[honcho] Failed to persist current sender for ${sessionKey}: ${e}`);
+        }
+      }
 
       const sections: string[] = [];
 
@@ -44,7 +65,7 @@ export function registerContextHook(api: OpenClawPluginApi, state: PluginState):
           throw e;
         }
       } else {
-        const session = await state.honcho.session(sessionKey, { metadata: { agentId } });
+        const session = await state.honcho.session(sessionKey);
 
         let context;
         try {

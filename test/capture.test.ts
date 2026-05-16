@@ -1,0 +1,125 @@
+import { describe, expect, it, vi } from "vitest";
+import { flushMessages } from "../hooks/capture.js";
+import { buildSessionKey } from "../helpers.js";
+import type { PluginState } from "../state.js";
+
+const SENTINEL = "Conversation info (untrusted metadata):";
+
+function metadataBlock(payload: Record<string, unknown>): string {
+  return [SENTINEL, "```json", JSON.stringify(payload, null, 2), "```"].join("\n");
+}
+
+type SessionStub = {
+  metadata: Record<string, unknown>;
+  getMetadata: ReturnType<typeof vi.fn>;
+  setMetadata: ReturnType<typeof vi.fn>;
+  addPeers: ReturnType<typeof vi.fn>;
+  addMessages: ReturnType<typeof vi.fn>;
+};
+
+function createMockState(): { state: PluginState; session: SessionStub } {
+  const session: SessionStub = {
+    metadata: {},
+    getMetadata: vi.fn(async () => session.metadata),
+    setMetadata: vi.fn(async (next: Record<string, unknown>) => {
+      session.metadata = next;
+    }),
+    addPeers: vi.fn(async () => undefined),
+    addMessages: vi.fn(async () => undefined),
+  };
+  const agentPeer = { id: "agent-main", message: vi.fn((text: string) => ({ text })) };
+  const ownerPeer = { id: "owner", message: vi.fn((text: string) => ({ text })) };
+
+  const state = {
+    cfg: {
+      noisePatterns: [],
+      ownerObserveOthers: false,
+      crossSessionSearch: true,
+      workspaceId: "openclaw",
+      baseUrl: "https://api.honcho.dev",
+    },
+    honcho: {
+      session: vi.fn(async () => session),
+    },
+    turnStartIndex: new Map<string, number>(),
+    sessionSenderIds: new Map<string, string>(),
+    ensureInitialized: vi.fn(async () => undefined),
+    getAgentPeer: vi.fn(async () => agentPeer),
+    getParticipantPeer: vi.fn(async () => ownerPeer),
+    resolveSessionParticipantPeer: vi.fn(async () => ownerPeer),
+    resolveDefaultAgentId: vi.fn(() => "main"),
+  } as unknown as PluginState;
+
+  return { state, session };
+}
+
+function loggerStub() {
+  return {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  };
+}
+
+describe("flushMessages sender attribution", () => {
+  it("records participantSenderId from the latest user message in the batch", async () => {
+    const { state, session } = createMockState();
+    const api = { logger: loggerStub() } as never;
+
+    await flushMessages(
+      api,
+      state,
+      [
+        {
+          role: "user",
+          content: `${metadataBlock({ sender_id: "U-alice" })}\n\nhi`,
+          timestamp: 1,
+        },
+        {
+          role: "user",
+          content: `${metadataBlock({ sender_id: "U-bob" })}\n\nhello`,
+          timestamp: 2,
+        },
+        { role: "assistant", content: "reply", timestamp: 3 },
+      ],
+      {
+        sessionKey: "agent:main:telegram:group:c-1",
+        agentId: "main",
+      },
+    );
+
+    expect(session.metadata.participantSenderId).toBe("U-bob");
+  });
+
+  it("falls back to the sender captured during before_prompt_build when saved messages lack metadata", async () => {
+    const { state, session } = createMockState();
+    const api = { logger: loggerStub() } as never;
+    const openclawSessionKey = "agent:main:telegram:direct:8784993029";
+    const honchoSessionKey = buildSessionKey({
+      sessionKey: openclawSessionKey,
+      agentId: "main",
+      messageProvider: "telegram",
+    });
+
+    state.sessionSenderIds.set(honchoSessionKey, "8784993029");
+
+    await flushMessages(
+      api,
+      state,
+      [
+        { role: "user", content: "metadata already stripped", timestamp: 1 },
+        { role: "assistant", content: "reply", timestamp: 2 },
+      ],
+      {
+        sessionKey: openclawSessionKey,
+        agentId: "main",
+        messageProvider: "telegram",
+      },
+    );
+
+    expect(state.getParticipantPeer).toHaveBeenCalledWith("8784993029");
+    expect(session.metadata.participantSenderId).toBe("8784993029");
+    expect((state.honcho.session as unknown as ReturnType<typeof vi.fn>).mock.calls[0]).toHaveLength(1);
+  });
+});

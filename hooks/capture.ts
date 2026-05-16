@@ -15,7 +15,7 @@ import { subagentParentMap } from "./subagent.js";
  * Core message capture logic shared by agent_end, before_compaction, and before_reset.
  * Returns the number of new messages saved (or 0 if none).
  */
-async function flushMessages(
+export async function flushMessages(
   api: OpenClawPluginApi,
   state: PluginState,
   messages: unknown[],
@@ -43,7 +43,7 @@ async function flushMessages(
     } : {}),
   };
 
-  const session = await state.honcho.session(sessionKey, { metadata: sessionMeta });
+  const session = await state.honcho.session(sessionKey);
   const meta = await session.getMetadata();
   const existingMeta: Record<string, unknown> =
     meta && typeof meta === "object" ? (meta as Record<string, unknown>) : {};
@@ -94,7 +94,15 @@ async function flushMessages(
     resolvedPeers.set(senderIdArray[i], peers[i]);
   }
 
-  const defaultParticipantPeer = await state.getParticipantPeer();
+  const fallbackSenderId = lastSenderId ??
+    state.sessionSenderIds.get(sessionKey) ??
+    (typeof existingMeta.participantSenderId === "string" ? existingMeta.participantSenderId : undefined);
+  const defaultParticipantPeer = fallbackSenderId
+    ? await state.getParticipantPeer(fallbackSenderId)
+    : await state.resolveSessionParticipantPeer(sessionKey);
+  if (fallbackSenderId) {
+    resolvedPeers.set(fallbackSenderId, defaultParticipantPeer);
+  }
 
   // Build peer configs: default owner + all resolved participant peers + agent + parent
   const peerConfigMap = new Map<string, { observeMe: boolean; observeOthers: boolean }>();
@@ -130,8 +138,8 @@ async function flushMessages(
     ...sessionMeta,
     lastSavedIndex: messages.length,
   };
-  if (lastSenderId) {
-    updatedMeta.participantSenderId = lastSenderId;
+  if (fallbackSenderId) {
+    updatedMeta.participantSenderId = fallbackSenderId;
   }
 
   if (extracted.length === 0) {
