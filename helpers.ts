@@ -205,6 +205,14 @@ export function extractSenderId(content: string): string | undefined {
   return undefined;
 }
 
+export function getMessageSenderId(msg: unknown): string | undefined {
+  if (!msg || typeof msg !== "object") return undefined;
+  const m = msg as Record<string, unknown>;
+  const direct = m.senderId ?? m.sender_id;
+  if (typeof direct === "string" && direct.length > 0) return direct;
+  return extractSenderId(getRawContent(msg));
+}
+
 /**
  * Returns true if the message should be dropped entirely.
  * Patterns starting with "/" are treated as anchored regexes (e.g. "/^HEARTBEAT/i").
@@ -249,7 +257,7 @@ export function extractMessages(
     // For user messages, extract sender ID before cleaning strips metadata
     let peer: Peer;
     if (role === "user") {
-      const senderId = extractSenderId(rawContent);
+      const senderId = getMessageSenderId(msg);
       peer = (senderId && resolvePeer?.(senderId)) || defaultParticipantPeer;
     } else {
       peer = agentPeer;

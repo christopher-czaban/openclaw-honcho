@@ -122,4 +122,55 @@ describe("flushMessages sender attribution", () => {
     expect(session.metadata.participantSenderId).toBe("8784993029");
     expect((state.honcho.session as unknown as ReturnType<typeof vi.fn>).mock.calls[0]).toHaveLength(1);
   });
+
+  it("uses structured senderId fields when OpenClaw strips metadata from stored messages", async () => {
+    const { state, session } = createMockState();
+    const api = { logger: loggerStub() } as never;
+
+    await flushMessages(
+      api,
+      state,
+      [
+        { role: "user", content: "plain stored content", senderId: "8784993029", timestamp: 1 },
+        { role: "assistant", content: "reply", timestamp: 2 },
+      ],
+      {
+        sessionKey: "agent:main:telegram:direct:8784993029",
+        agentId: "main",
+        messageProvider: "telegram",
+      },
+    );
+
+    expect(state.getParticipantPeer).toHaveBeenCalledWith("8784993029");
+    expect(session.metadata.participantSenderId).toBe("8784993029");
+    expect(session.addMessages).toHaveBeenCalled();
+  });
+
+  it("captures a new shorter transcript when stored lastSavedIndex is stale", async () => {
+    const { state, session } = createMockState();
+    const api = { logger: loggerStub() } as never;
+    session.metadata = {
+      lastSavedIndex: 6,
+      participantSenderId: "8784993029",
+    };
+
+    const saved = await flushMessages(
+      api,
+      state,
+      [
+        { role: "user", content: "post-restart message", senderId: "8784993029", timestamp: 1 },
+        { role: "assistant", content: "post-restart reply", timestamp: 2 },
+      ],
+      {
+        sessionKey: "agent:main:telegram:direct:8784993029",
+        agentId: "main",
+        messageProvider: "telegram",
+      },
+    );
+
+    expect(saved).toBe(2);
+    expect(session.metadata.lastSavedIndex).toBe(2);
+    expect(session.metadata.participantSenderId).toBe("8784993029");
+    expect(session.addMessages).toHaveBeenCalled();
+  });
 });

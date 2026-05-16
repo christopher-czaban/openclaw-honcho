@@ -6,7 +6,7 @@ import {
   buildSessionKey,
   isSubagentSession,
   extractMessages,
-  extractSenderId,
+  getMessageSenderId,
   getRawContent,
 } from "../helpers.js";
 import { subagentParentMap } from "./subagent.js";
@@ -54,7 +54,12 @@ export async function flushMessages(
   );
   const rawLastSavedIndex =
     typeof existingMeta.lastSavedIndex === "number" ? existingMeta.lastSavedIndex : 0;
-  const lastSavedIndex = Math.min(Math.max(rawLastSavedIndex, 0), messages.length);
+  const lastSavedIndex = rawLastSavedIndex > messages.length ? 0 : Math.max(rawLastSavedIndex, 0);
+  if (rawLastSavedIndex > messages.length) {
+    api.logger.debug?.(
+      `[honcho] Resetting lastSavedIndex for ${sessionKey}: stored=${rawLastSavedIndex}, currentMessages=${messages.length}`,
+    );
+  }
   const startIndex = Math.max(turnStartIndex, lastSavedIndex);
 
   if (messages.length <= startIndex) {
@@ -73,7 +78,7 @@ export async function flushMessages(
     if (m.role !== "user") continue;
     userMsgCount++;
     const rawContent = getRawContent(msg);
-    const senderId = extractSenderId(rawContent);
+    const senderId = getMessageSenderId(msg);
     if (senderId) {
       senderIds.add(senderId);
       lastSenderId = senderId;
